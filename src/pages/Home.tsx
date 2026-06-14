@@ -2453,31 +2453,80 @@ export default function Home() {
       ((import.meta as any).env?.VITE_SUPABASE_URL && (import.meta as any).env?.VITE_SUPABASE_ANON_KEY)
   );
   const [session, setSession] = useState<any>(null);
-  // Live pricing fetched from Supabase `products` table. Falls back to the
-  // hardcoded prices in FRAGRANCES/MORE_FRAGRANCES if Supabase is unreachable.
-  const [priceOverrides, setPriceOverrides] = useState<Record<number, Fragrance["sizes"]>>({});
+
+  // ── جلب المنتجات والكيتات من Supabase ──────────────────────────────────
+  // إذا كان Supabase جاهزاً نجلب كل شيء منه (الأسماء + الأسعار + التفاصيل).
+  // إذا لم يكن جاهزاً نرجع للبيانات الثابتة المكتوبة في الكود كـ fallback.
+  const [dbProducts, setDbProducts] = useState<Fragrance[] | null>(null);
+  const [dbKits, setDbKits] = useState<typeof DISCOVERY_KITS | null>(null);
 
   useEffect(() => {
     if (!supabaseReady) return;
     let cancelled = false;
     (async () => {
       try {
-        const { data, error } = await supabase.from("products").select("id, sizes");
-        if (error || !data || cancelled) return;
-        const map: Record<number, Fragrance["sizes"]> = {};
-        for (const row of data as { id: number; sizes: Fragrance["sizes"] }[]) {
-          if (row && typeof row.id === "number" && Array.isArray(row.sizes)) {
-            map[row.id] = row.sizes;
-          }
+        // ── المنتجات ──
+        const { data: prodData, error: prodErr } = await supabase
+          .from("products")
+          .select("id, house, name, gender, family, badge, rating, reviews, description, description_it, notes, sizes")
+          .eq("active", true)
+          .order("sort_order", { ascending: true });
+
+        if (!prodErr && prodData && !cancelled) {
+          const mapped: Fragrance[] = (prodData as any[]).map((row) => {
+            // نبحث عن الصورة المقابلة من البيانات الثابتة (الصور لا تزال محلية)
+            const staticFrag = [...FRAGRANCES, ...MORE_FRAGRANCES].find((f) => f.id === row.id);
+            return {
+              id: row.id,
+              house: row.house ?? "",
+              name: row.name ?? "",
+              gender: row.gender ?? "Unisex",
+              family: row.family ?? "",
+              familyIt: staticFrag?.familyIt ?? row.family ?? "",
+              genderIt: staticFrag?.genderIt ?? row.gender ?? "",
+              badge: row.badge ?? undefined,
+              emoji: staticFrag?.emoji ?? "",
+              rating: Number(row.rating) || 4.5,
+              reviews: Number(row.reviews) || 0,
+              description: row.description ?? staticFrag?.description ?? "",
+              descriptionIt: row.description_it ?? staticFrag?.descriptionIt ?? "",
+              notes: row.notes ?? { top: [], heart: [], base: [] },
+              notesIt: staticFrag?.notesIt ?? row.notes ?? { top: [], heart: [], base: [] },
+              sizes: Array.isArray(row.sizes) ? row.sizes : (staticFrag?.sizes ?? []),
+              image: staticFrag?.image ?? "",
+            };
+          });
+          setDbProducts(mapped);
         }
-        setPriceOverrides(map);
+
+        // ── الكيتات ──
+        const { data: kitsData, error: kitsErr } = await supabase
+          .from("kits")
+          .select("id, name, name_it, items, price, original_price")
+          .eq("active", true)
+          .order("sort_order", { ascending: true });
+
+        if (!kitsErr && kitsData && !cancelled) {
+          const mappedKits = (kitsData as any[]).map((row) => {
+            const staticKit = DISCOVERY_KITS.find((k) => k.id === row.id);
+            return {
+              id: row.id,
+              name: row.name,
+              nameIt: row.name_it ?? row.name,
+              items: Array.isArray(row.items) ? row.items : [],
+              price: Number(row.price),
+              originalPrice: Number(row.original_price),
+              emoji: staticKit?.emoji ?? "",
+              image: staticKit?.image ?? "",
+            };
+          });
+          setDbKits(mappedKits as typeof DISCOVERY_KITS);
+        }
       } catch {
-        // ignore — keep static fallback prices
+        // ignore — fallback للبيانات الثابتة
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [supabaseReady]);
 
   const [authEmail, setAuthEmail] = useState("");
@@ -2738,13 +2787,17 @@ const BASE_ORDERS = 458;
     return () => window.removeEventListener("keydown", fn);
   }, []);
 
+  // إذا جلبنا المنتجات من Supabase نستخدمها، وإلا نرجع للبيانات الثابتة
   const ALL_FRAGRANCES = useMemo(() => {
-    const base = [...FRAGRANCES, ...MORE_FRAGRANCES];
-    if (Object.keys(priceOverrides).length === 0) return base;
-    return base.map((f) =>
-      priceOverrides[f.id] ? { ...f, sizes: priceOverrides[f.id] } : f
-    );
-  }, [priceOverrides]);
+    if (dbProducts && dbProducts.length > 0) return dbProducts;
+    return [...FRAGRANCES, ...MORE_FRAGRANCES];
+  }, [dbProducts]);
+
+  // الكيتات: من Supabase إذا متاحة، وإلا الثابتة
+  const ALL_KITS = useMemo(() => {
+    if (dbKits && dbKits.length > 0) return dbKits;
+    return DISCOVERY_KITS;
+  }, [dbKits]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -3166,7 +3219,7 @@ const BASE_ORDERS = 458;
                 <p style={{ color: "#666", fontSize: 13 }}>{t.kitSubtitle}</p>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : isTablet ? "repeat(3,1fr)" : isWide ? "repeat(4,1fr)" : "repeat(3,1fr)", gap: isMobile ? 10 : isTablet ? 16 : 20 }}>
-                {DISCOVERY_KITS.map((kit) => (
+                {ALL_KITS.map((kit) => (
                   <div
                     key={kit.id}
                     style={{ background: "linear-gradient(145deg,#0d0d0d,#080808)", border: "1px solid #141414", borderRadius: 20, padding: isMobile ? 18 : 28, transition: "all 0.3s" }}
