@@ -193,6 +193,19 @@ export default async function handler(req, res) {
           'GR', 'CZ', 'HU', 'RO', 'HR', 'SK', 'SI', 'GB',
         ],
       },
+      shipping_options: [
+  {
+    shipping_rate_data: {
+      type: 'fixed_amount',
+      fixed_amount: { amount: 500, currency: 'eur' },
+      display_name: 'Spedizione standard',
+      delivery_estimate: {
+        minimum: { unit: 'business_day', value: 3 },
+        maximum: { unit: 'business_day', value: 7 },
+      },
+    },
+  },
+],
       success_url: absUrl('/#/received?order={CHECKOUT_SESSION_ID}'),
       cancel_url: absUrl('/#/'),
     });
